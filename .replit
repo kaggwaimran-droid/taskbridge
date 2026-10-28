@@ -1,0 +1,2 @@
+run = "cd app && npm install && npm start"
+entrypoint = "app/server.js"
