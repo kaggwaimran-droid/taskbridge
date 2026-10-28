@@ -42,7 +42,7 @@ app.use(express.static(path.join(__dirname,'public')));
 const authLimit = rateLimit({windowMs:900000,limit:30,standardHeaders:'draft-7',legacyHeaders:false});
 const writeLimit = rateLimit({windowMs:60000,limit:40,standardHeaders:'draft-7',legacyHeaders:false});
 const clean = (v,n=2000)=>String(v??'').trim().slice(0,n);
-const emailOK = /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/;
+const emailOK = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 function me(req){if(!req.session.userId)return null;return db.prepare('SELECT id,name,email,bio,country,role,created_at FROM users WHERE id=?').get(req.session.userId)||null}
 function auth(req,res,next){const u=me(req);if(!u)return res.status(401).json({error:'Please sign in to continue.'});req.user=u;next()}
 function admin(req,res,next){if(!req.user||req.user.role!=='admin')return res.status(403).json({error:'Admin access required.'});next()}
@@ -86,7 +86,7 @@ app.post('/api/tasks',auth,writeLimit,(req,res)=>{
  if(!['Research','Data Entry','Writing','Design','Development','Marketing','Admin Support','Other'].includes(category))return res.status(400).json({error:'Choose a valid category.'});
  if(!Number.isFinite(budget)||budget<1||budget>1000000)return res.status(400).json({error:'Budget must be between 1 and 1,000,000.'});
  if(!/^[A-Z]{3}$/.test(currency))return res.status(400).json({error:'Use a three-letter currency code.'});
- if(deadline&&!/^\\d{4}-\\d{2}-\\d{2}$/.test(deadline))return res.status(400).json({error:'Choose a valid deadline.'});
+ if(deadline&&!/^\d{4}-\d{2}-\d{2}$/.test(deadline))return res.status(400).json({error:'Choose a valid deadline.'});
  const r=db.prepare('INSERT INTO tasks(client_id,title,description,category,task_type,budget,currency,deadline) VALUES(?,?,?,?,?,?,?,?)').run(req.user.id,title,description,category,type,budget,currency,deadline);
  res.status(201).json({id:Number(r.lastInsertRowid)});
 });
