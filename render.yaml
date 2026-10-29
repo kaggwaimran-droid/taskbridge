@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: taskbridge
+    runtime: node
+    plan: free
+    rootDir: .
+    buildCommand: cd app && npm install
+    startCommand: cd app && npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: ADMIN_EMAIL
+        sync: false
