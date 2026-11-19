@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+Allow: /marketplace
+Sitemap: https://taskbridge-uaka.onrender.com/sitemap.xml
