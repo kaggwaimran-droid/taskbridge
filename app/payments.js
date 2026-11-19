@@ -42,11 +42,12 @@ module.exports=function(pool){
   const taskId=Number(req.params.id),method=String(req.body.method||'card'),phone=String(req.body.phone_number||'').replace(/[^0-9]/g,'');
   const q=await pool.query("SELECT t.id,t.client_id,t.budget,t.currency,t.status,s.worker_id FROM tasks t JOIN task_submissions s ON s.task_id=t.id WHERE t.id=$1 AND s.status='approved' ORDER BY s.reviewed_at DESC LIMIT 1",[taskId]);
   const t=q.rows[0];if(!t)return res.status(400).json({error:'A client can pay only after a worker submission has been approved.'});
+  const amount=Number(t.budget),commission=Number((amount*0.10).toFixed(2)),workerAmount=Number((amount-commission).toFixed(2));
   if(t.client_id!==req.user.id)return res.status(403).json({error:'Only the task owner can pay for this task.'});
   if(!['card','mobile_money'].includes(method))return res.status(400).json({error:'Choose card or mobile money.'});
   if(method==='mobile_money'&&(t.currency!=='UGX'||phone.length<9||!Number.isInteger(amount)))return res.status(400).json({error:'Uganda mobile money requires a valid phone number and UGX task budget.'});
-  const amount=Number(t.budget),commission=Number((amount*0.10).toFixed(2)),workerAmount=Number((amount-commission).toFixed(2));
-  const existing=await pool.query("SELECT id,status FROM task_payments WHERE task_id=$1 AND status IN ('pending','paid') ORDER BY created_at DESC LIMIT 1",[t.id]);if(existing.rowCount)return res.status(409).json({error:'A payment is already pending or completed for this task.'});\n  const txRef='TB-'+crypto.randomUUID();
+  const existing=await pool.query("SELECT id,status FROM task_payments WHERE task_id=$1 AND status IN ('pending','paid') ORDER BY created_at DESC LIMIT 1",[t.id]);if(existing.rowCount)return res.status(409).json({error:'A payment is already pending or completed for this task.'});
+  const txRef='TB-'+crypto.randomUUID();
   await pool.query('INSERT INTO task_payments(task_id,client_id,worker_id,tx_ref,amount,currency,commission,worker_amount,payment_method) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)',[t.id,t.client_id,t.worker_id,txRef,amount,t.currency,commission,workerAmount,method]);
   const base={amount,currency:t.currency,email:req.user.email,tx_ref:txRef,redirect_url:process.env.FLW_REDIRECT_URL||'https://taskbridge-uaka.onrender.com/marketplace/'};
   let endpoint='https://api.flutterwave.com/v3/payments',payload={...base,customer:{email:req.user.email,name:req.user.name},customizations:{title:'TaskBridge task payment',description:'Payment for approved task'}};
