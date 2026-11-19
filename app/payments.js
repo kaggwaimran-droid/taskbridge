@@ -35,7 +35,9 @@ CREATE TABLE IF NOT EXISTS withdrawal_requests(
  );
  ALTER TABLE withdrawal_requests ADD COLUMN IF NOT EXISTS reviewed_by BIGINT REFERENCES users(id);
  ALTER TABLE withdrawal_requests ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMPTZ;
- ALTER TABLE withdrawal_requests ADD COLUMN IF NOT EXISTS payout_reference TEXT`);
+ ALTER TABLE withdrawal_requests ADD COLUMN IF NOT EXISTS payout_reference TEXT;
+ ALTER TABLE withdrawal_requests ADD COLUMN IF NOT EXISTS withdrawal_fee NUMERIC(12,2) NOT NULL DEFAULT 0;
+ ALTER TABLE withdrawal_requests ADD COLUMN IF NOT EXISTS payout_amount NUMERIC(12,2) NOT NULL DEFAULT 0`);
  router.use(async(req,res,next)=>{try{await schema;next()}catch(e){next(e)}});
  async function user(req){if(!req.session.userId)return null;return (await pool.query('SELECT id,name,email,role FROM users WHERE id=$1',[req.session.userId])).rows[0]||null}
  async function auth(req,res,next){try{req.user=await user(req);if(!req.user)return res.status(401).json({error:'Please sign in.'});next()}catch(e){next(e)}}
@@ -50,14 +52,14 @@ CREATE TABLE IF NOT EXISTS withdrawal_requests(
   ]);
   const reservedByCurrency=Object.fromEntries(reserved.rows.map(x=>[x.currency,Number(x.total)]));
   const available_balances=earn.rows.map(x=>({currency:x.currency,earned:Number(x.total),reserved:reservedByCurrency[x.currency]||0,available:Math.max(0,Number(x.total)-(reservedByCurrency[x.currency]||0))}));
-  res.json({commission_rate:0.10,worker_earnings:earn.rows,client_payments:paid.rows,withdrawals:withdrawals.rows,available_balances,pending_submission_earnings:pendingEarnings.rows,earning_history:earningHistory.rows,live_payments_enabled:!!process.env.FLW_SECRET_KEY&&!!process.env.FLW_WEBHOOK_HASH});
+  res.json({commission_rate:0.08,withdrawal_fee_rate:0.10,worker_earnings:earn.rows,client_payments:paid.rows,withdrawals:withdrawals.rows,available_balances,pending_submission_earnings:pendingEarnings.rows,earning_history:earningHistory.rows,live_payments_enabled:!!process.env.FLW_SECRET_KEY&&!!process.env.FLW_WEBHOOK_HASH});
  }catch(e){next(e)}});
  router.post('/tasks/:id/payment/checkout',auth,async(req,res,next)=>{try{
   if(!process.env.FLW_SECRET_KEY||!process.env.FLW_WEBHOOK_HASH)return res.status(503).json({error:'Payment provider is not configured yet. TaskBridge is not accepting real payments.'});
   const taskId=Number(req.params.id),method=String(req.body.method||'card'),phone=String(req.body.phone_number||'').replace(/[^0-9]/g,'');
   const q=await pool.query("SELECT t.id,t.client_id,t.budget,t.currency,t.status,s.worker_id FROM tasks t JOIN task_submissions s ON s.task_id=t.id WHERE t.id=$1 AND s.status='approved' ORDER BY s.reviewed_at DESC LIMIT 1",[taskId]);
   const t=q.rows[0];if(!t)return res.status(400).json({error:'A client can pay only after a worker submission has been approved.'});
-  const amount=Number(t.budget),commission=Number((amount*0.10).toFixed(2)),workerAmount=Number((amount-commission).toFixed(2));
+  const amount=Number(t.budget),commission=Number((amount*0.08).toFixed(2)),workerAmount=Number((amount-commission).toFixed(2));
   if(t.client_id!==req.user.id)return res.status(403).json({error:'Only the task owner can pay for this task.'});
   if(!['card','mobile_money'].includes(method))return res.status(400).json({error:'Choose card or mobile money.'});
   if(method==='mobile_money'&&(t.currency!=='UGX'||phone.length<9||!Number.isInteger(amount)))return res.status(400).json({error:'Uganda mobile money requires a valid phone number and UGX task budget.'});
@@ -105,6 +107,7 @@ CREATE TABLE IF NOT EXISTS withdrawal_requests(
  }catch(e){try{await c.query('ROLLBACK')}catch(_){}next(e)}finally{c.release()}});
  router.post('/payments/withdrawals',auth,async(req,res,next)=>{try{
   const amount=Number(req.body.amount),currency=String(req.body.currency||'UGX').toUpperCase(),network=String(req.body.network||''),phone=String(req.body.phone_number||'').replace(/[^0-9]/g,'');
+  const withdrawalFee=Number((amount*0.10).toFixed(2)),payoutAmount=Number((amount-withdrawalFee).toFixed(2));
   if(currency!=='UGX'||!['MTN','AIRTEL'].includes(network)||phone.length<9||!Number.isFinite(amount)||amount<=0)return res.status(400).json({error:'Uganda withdrawals require a valid UGX amount, MTN or AIRTEL network and mobile number.'});
   const c=await pool.connect();let q;
   try{
@@ -113,10 +116,10 @@ CREATE TABLE IF NOT EXISTS withdrawal_requests(
    const bal=await c.query("SELECT COALESCE(SUM(amount),0)::numeric AS total FROM payment_ledger WHERE user_id=$1 AND entry_type='worker_earning'",[req.user.id]);
    const reserved=await c.query("SELECT COALESCE(SUM(amount),0)::numeric AS total FROM withdrawal_requests WHERE user_id=$1 AND status IN ('requested','processing','paid','completed')",[req.user.id]);
    if(Number(bal.rows[0].total)-Number(reserved.rows[0].total)<amount){await c.query('ROLLBACK');return res.status(400).json({error:'Insufficient available earnings.'});}
-   q=await c.query("INSERT INTO withdrawal_requests(user_id,amount,currency,network,phone_number) VALUES($1,$2,'UGX',$3,$4) RETURNING id,status",[req.user.id,amount,network,phone]);
+   q=await c.query("INSERT INTO withdrawal_requests(user_id,amount,currency,network,phone_number,withdrawal_fee,payout_amount) VALUES($1,$2,'UGX',$3,$4,$5,$6) RETURNING id,status,amount,withdrawal_fee,payout_amount",[req.user.id,amount,network,phone,withdrawalFee,payoutAmount]);
    await c.query('COMMIT');
   }catch(e){await c.query('ROLLBACK');throw e}finally{c.release()}
-  res.status(201).json({withdrawal:q.rows[0],message:'Withdrawal request recorded. Payouts are not automated until provider approval and payout credentials are configured.'});
+  res.status(201).json({withdrawal:q.rows[0],fee_rate:0.10,withdrawal_fee:withdrawalFee,payout_amount:payoutAmount,message:'Withdrawal request recorded. The 10% withdrawal fee has been shown separately; payouts are not automated until provider approval and payout credentials are configured.'});
  }catch(e){next(e)}});
  return router;
 };
