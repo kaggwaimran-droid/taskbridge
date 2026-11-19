@@ -44,9 +44,9 @@ module.exports=function(pool){
   const t=q.rows[0];if(!t)return res.status(400).json({error:'A client can pay only after a worker submission has been approved.'});
   if(t.client_id!==req.user.id)return res.status(403).json({error:'Only the task owner can pay for this task.'});
   if(!['card','mobile_money'].includes(method))return res.status(400).json({error:'Choose card or mobile money.'});
-  if(method==='mobile_money'&&(t.currency!=='UGX'||phone.length<9))return res.status(400).json({error:'Uganda mobile money requires a valid phone number and UGX task budget.'});
+  if(method==='mobile_money'&&(t.currency!=='UGX'||phone.length<9||!Number.isInteger(amount)))return res.status(400).json({error:'Uganda mobile money requires a valid phone number and UGX task budget.'});
   const amount=Number(t.budget),commission=Number((amount*0.10).toFixed(2)),workerAmount=Number((amount-commission).toFixed(2));
-  const txRef='TB-'+crypto.randomUUID();
+  const existing=await pool.query("SELECT id,status FROM task_payments WHERE task_id=$1 AND status IN ('pending','paid') ORDER BY created_at DESC LIMIT 1",[t.id]);if(existing.rowCount)return res.status(409).json({error:'A payment is already pending or completed for this task.'});\n  const txRef='TB-'+crypto.randomUUID();
   await pool.query('INSERT INTO task_payments(task_id,client_id,worker_id,tx_ref,amount,currency,commission,worker_amount,payment_method) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)',[t.id,t.client_id,t.worker_id,txRef,amount,t.currency,commission,workerAmount,method]);
   const base={amount,currency:t.currency,email:req.user.email,tx_ref:txRef,redirect_url:process.env.FLW_REDIRECT_URL||'https://taskbridge-uaka.onrender.com/marketplace/'};
   let endpoint='https://api.flutterwave.com/v3/payments',payload={...base,customer:{email:req.user.email,name:req.user.name},customizations:{title:'TaskBridge task payment',description:'Payment for approved task'}};
@@ -61,7 +61,7 @@ module.exports=function(pool){
   res.status(201).json({tx_ref:txRef,checkout_url:url,status:'pending',amount,currency:t.currency,commission,worker_amount:workerAmount});
  }catch(e){next(e)}});
  router.post('/payments/webhook',async(req,res,next)=>{try{
-  const supplied=req.headers['verif-hash'];if(!supplied||!process.env.FLW_WEBHOOK_HASH||!crypto.timingSafeEqual(Buffer.from(String(supplied)),Buffer.from(String(process.env.FLW_WEBHOOK_HASH))))return res.sendStatus(401);
+  const supplied=req.headers['verif-hash'];const expected=String(process.env.FLW_WEBHOOK_HASH||'');if(!supplied||!expected||String(supplied).length!==expected.length||!crypto.timingSafeEqual(Buffer.from(String(supplied)),Buffer.from(expected)))return res.sendStatus(401);
   const event=req.body?.event,d=req.body?.data||{};if(event!=='charge.completed'||!d.id||!d.tx_ref)return res.sendStatus(200);
   const p=(await pool.query('SELECT * FROM task_payments WHERE tx_ref=$1',[d.tx_ref])).rows[0];if(!p||p.status==='paid')return res.sendStatus(200);
   const vr=await fetch('https://api.flutterwave.com/v3/transactions/'+encodeURIComponent(d.id)+'/verify',{headers:{Authorization:'Bearer '+process.env.FLW_SECRET_KEY}});
