@@ -74,10 +74,16 @@ module.exports=function(pool){
  router.post('/payments/withdrawals',auth,async(req,res,next)=>{try{
   const amount=Number(req.body.amount),currency=String(req.body.currency||'UGX').toUpperCase(),network=String(req.body.network||''),phone=String(req.body.phone_number||'').replace(/[^0-9]/g,'');
   if(currency!=='UGX'||!['MTN','AIRTEL'].includes(network)||phone.length<9||!Number.isFinite(amount)||amount<=0)return res.status(400).json({error:'Uganda withdrawals require a valid UGX amount, MTN or AIRTEL network and mobile number.'});
-  const bal=await pool.query("SELECT COALESCE(SUM(amount),0)::numeric AS total FROM payment_ledger WHERE user_id=$1 AND entry_type='worker_earning'",[req.user.id]);
-  const pending=await pool.query("SELECT COALESCE(SUM(amount),0)::numeric AS total FROM withdrawal_requests WHERE user_id=$1 AND status IN ('requested','processing')",[req.user.id]);
-  if(Number(bal.rows[0].total)-Number(pending.rows[0].total)<amount)return res.status(400).json({error:'Insufficient available earnings.'});
-  const q=await pool.query("INSERT INTO withdrawal_requests(user_id,amount,currency,network,phone_number) VALUES($1,$2,'UGX',$3,$4) RETURNING id,status",[req.user.id,amount,network,phone]);
+  const c=await pool.connect();let q;
+  try{
+   await c.query('BEGIN');
+   await c.query('SELECT id FROM users WHERE id=$1 FOR UPDATE',[req.user.id]);
+   const bal=await c.query("SELECT COALESCE(SUM(amount),0)::numeric AS total FROM payment_ledger WHERE user_id=$1 AND entry_type='worker_earning'",[req.user.id]);
+   const reserved=await c.query("SELECT COALESCE(SUM(amount),0)::numeric AS total FROM withdrawal_requests WHERE user_id=$1 AND status IN ('requested','processing','paid','completed')",[req.user.id]);
+   if(Number(bal.rows[0].total)-Number(reserved.rows[0].total)<amount){await c.query('ROLLBACK');return res.status(400).json({error:'Insufficient available earnings.'});}
+   q=await c.query("INSERT INTO withdrawal_requests(user_id,amount,currency,network,phone_number) VALUES($1,$2,'UGX',$3,$4) RETURNING id,status",[req.user.id,amount,network,phone]);
+   await c.query('COMMIT');
+  }catch(e){await c.query('ROLLBACK');throw e}finally{c.release()}
   res.status(201).json({withdrawal:q.rows[0],message:'Withdrawal request recorded. Payouts are not automated until provider approval and payout credentials are configured.'});
  }catch(e){next(e)}});
  return router;
