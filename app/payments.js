@@ -24,8 +24,11 @@ module.exports=function(pool){
   id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES users(id),
   amount NUMERIC(12,2) NOT NULL, currency VARCHAR(3) NOT NULL,
   network TEXT NOT NULL, phone_number TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'requested',
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
- )`);
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), reviewed_by BIGINT REFERENCES users(id), reviewed_at TIMESTAMPTZ, payout_reference TEXT
+ );
+ ALTER TABLE withdrawal_requests ADD COLUMN IF NOT EXISTS reviewed_by BIGINT REFERENCES users(id);
+ ALTER TABLE withdrawal_requests ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMPTZ;
+ ALTER TABLE withdrawal_requests ADD COLUMN IF NOT EXISTS payout_reference TEXT`);
  router.use(async(req,res,next)=>{try{await schema;next()}catch(e){next(e)}});
  async function user(req){if(!req.session.userId)return null;return (await pool.query('SELECT id,name,email,role FROM users WHERE id=$1',[req.session.userId])).rows[0]||null}
  async function auth(req,res,next){try{req.user=await user(req);if(!req.user)return res.status(401).json({error:'Please sign in.'});next()}catch(e){next(e)}}
@@ -71,6 +74,23 @@ module.exports=function(pool){
   const c=await pool.connect();try{await c.query('BEGIN');const locked=(await c.query('SELECT * FROM task_payments WHERE id=$1 FOR UPDATE',[p.id])).rows[0];if(locked.status!=='paid'){await c.query("UPDATE task_payments SET status='paid',provider_tx_id=$1,paid_at=NOW() WHERE id=$2",[String(d.id),p.id]);await c.query('INSERT INTO payment_ledger(payment_id,user_id,entry_type,amount,currency) VALUES($1,$2,$3,$4,$5),($1,$6,$7,$8,$5)',[p.id,p.client_id,'client_payment',-p.amount,p.currency,p.worker_id,'worker_earning',p.worker_amount]);await c.query('INSERT INTO payment_ledger(payment_id,user_id,entry_type,amount,currency) VALUES($1,$2,$3,$4,$5)',[p.id,p.client_id,'platform_commission',p.commission,p.currency]);}await c.query('COMMIT')}catch(e){await c.query('ROLLBACK');throw e}finally{c.release()}
   res.sendStatus(200);
  }catch(e){next(e)}});
+ router.get('/payments/admin/withdrawals',auth,async(req,res,next)=>{try{
+  if(req.user.role!=='admin')return res.status(403).json({error:'Admin access required.'});
+  const q=await pool.query("SELECT w.id,w.user_id,u.name AS worker_name,u.email AS worker_email,w.amount,w.currency,w.network,w.phone_number,w.status,w.payout_reference,w.created_at,w.reviewed_at FROM withdrawal_requests w JOIN users u ON u.id=w.user_id ORDER BY CASE WHEN w.status='requested' THEN 0 WHEN w.status='processing' THEN 1 ELSE 2 END,w.created_at ASC LIMIT 100");
+  res.json({withdrawals:q.rows});
+ }catch(e){next(e)}});
+ router.patch('/payments/admin/withdrawals/:id',auth,async(req,res,next)=>{const c=await pool.connect();try{
+  if(req.user.role!=='admin')return res.status(403).json({error:'Admin access required.'});
+  const status=String(req.body.status||''),reference=String(req.body.payout_reference||'').trim().slice(0,120);
+  if(!['processing','paid','rejected'].includes(status))return res.status(400).json({error:'Choose processing, paid or rejected.'});
+  if(status==='paid'&&!reference)return res.status(400).json({error:'Add the actual payout reference before marking this withdrawal paid.'});
+  await c.query('BEGIN');
+  const w=(await c.query('SELECT * FROM withdrawal_requests WHERE id=$1 FOR UPDATE',[Number(req.params.id)])).rows[0];
+  if(!w){await c.query('ROLLBACK');return res.status(404).json({error:'Withdrawal request not found.'});}
+  if(!['requested','processing'].includes(w.status)){await c.query('ROLLBACK');return res.status(409).json({error:'This withdrawal has already been closed.'});}
+  await c.query('UPDATE withdrawal_requests SET status=$1,reviewed_by=$2,reviewed_at=NOW(),payout_reference=$3 WHERE id=$4',[status,req.user.id,status==='paid'?reference:null,w.id]);
+  await c.query('COMMIT');res.json({ok:true,status,message:status==='paid'?'Payout marked paid. Confirm the transfer was actually sent.':'Withdrawal request updated.'});
+ }catch(e){try{await c.query('ROLLBACK')}catch(_){}next(e)}finally{c.release()}});
  router.post('/payments/withdrawals',auth,async(req,res,next)=>{try{
   const amount=Number(req.body.amount),currency=String(req.body.currency||'UGX').toUpperCase(),network=String(req.body.network||''),phone=String(req.body.phone_number||'').replace(/[^0-9]/g,'');
   if(currency!=='UGX'||!['MTN','AIRTEL'].includes(network)||phone.length<9||!Number.isFinite(amount)||amount<=0)return res.status(400).json({error:'Uganda withdrawals require a valid UGX amount, MTN or AIRTEL network and mobile number.'});
