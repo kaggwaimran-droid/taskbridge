@@ -33,12 +33,15 @@ module.exports=function(pool){
  async function user(req){if(!req.session.userId)return null;return (await pool.query('SELECT id,name,email,role FROM users WHERE id=$1',[req.session.userId])).rows[0]||null}
  async function auth(req,res,next){try{req.user=await user(req);if(!req.user)return res.status(401).json({error:'Please sign in.'});next()}catch(e){next(e)}}
  router.get('/payments/summary',auth,async(req,res,next)=>{try{
-  const [earn,paid,withdrawals]=await Promise.all([
+  const [earn,paid,withdrawals,reserved]=await Promise.all([
    pool.query("SELECT currency,COALESCE(SUM(amount),0)::numeric AS total FROM payment_ledger WHERE user_id=$1 AND entry_type='worker_earning' GROUP BY currency",[req.user.id]),
    pool.query("SELECT currency,COALESCE(SUM(amount),0)::numeric AS total FROM task_payments WHERE client_id=$1 AND status='paid' GROUP BY currency",[req.user.id]),
-   pool.query('SELECT id,amount,currency,network,phone_number,status,created_at FROM withdrawal_requests WHERE user_id=$1 ORDER BY created_at DESC LIMIT 20',[req.user.id])
+   pool.query('SELECT id,amount,currency,network,phone_number,status,created_at FROM withdrawal_requests WHERE user_id=$1 ORDER BY created_at DESC LIMIT 20',[req.user.id]),
+   pool.query("SELECT currency,COALESCE(SUM(amount),0)::numeric AS total FROM withdrawal_requests WHERE user_id=$1 AND status IN ('requested','processing','paid','completed') GROUP BY currency",[req.user.id])
   ]);
-  res.json({commission_rate:0.10,worker_earnings:earn.rows,client_payments:paid.rows,withdrawals:withdrawals.rows,live_payments_enabled:!!process.env.FLW_SECRET_KEY&&!!process.env.FLW_WEBHOOK_HASH});
+  const reservedByCurrency=Object.fromEntries(reserved.rows.map(x=>[x.currency,Number(x.total)]));
+  const available_balances=earn.rows.map(x=>({currency:x.currency,earned:Number(x.total),reserved:reservedByCurrency[x.currency]||0,available:Math.max(0,Number(x.total)-(reservedByCurrency[x.currency]||0))}));
+  res.json({commission_rate:0.10,worker_earnings:earn.rows,client_payments:paid.rows,withdrawals:withdrawals.rows,available_balances,live_payments_enabled:!!process.env.FLW_SECRET_KEY&&!!process.env.FLW_WEBHOOK_HASH});
  }catch(e){next(e)}});
  router.post('/tasks/:id/payment/checkout',auth,async(req,res,next)=>{try{
   if(!process.env.FLW_SECRET_KEY||!process.env.FLW_WEBHOOK_HASH)return res.status(503).json({error:'Payment provider is not configured yet. TaskBridge is not accepting real payments.'});
