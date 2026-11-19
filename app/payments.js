@@ -90,7 +90,7 @@ CREATE TABLE IF NOT EXISTS withdrawal_requests(
  }catch(e){next(e)}});
  router.get('/payments/admin/withdrawals',auth,async(req,res,next)=>{try{
   if(req.user.role!=='admin')return res.status(403).json({error:'Admin access required.'});
-  const q=await pool.query("SELECT w.id,w.user_id,u.name AS worker_name,u.email AS worker_email,w.amount,w.currency,w.network,w.phone_number,w.status,w.payout_reference,w.created_at,w.reviewed_at FROM withdrawal_requests w JOIN users u ON u.id=w.user_id ORDER BY CASE WHEN w.status='requested' THEN 0 WHEN w.status='processing' THEN 1 ELSE 2 END,w.created_at ASC LIMIT 100");
+  const q=await pool.query("SELECT w.id,w.user_id,u.name AS worker_name,u.email AS worker_email,w.amount,w.withdrawal_fee,w.payout_amount,w.currency,w.network,w.phone_number,w.status,w.payout_reference,w.created_at,w.reviewed_at FROM withdrawal_requests w JOIN users u ON u.id=w.user_id ORDER BY CASE WHEN w.status='requested' THEN 0 WHEN w.status='processing' THEN 1 ELSE 2 END,w.created_at ASC LIMIT 100");
   res.json({withdrawals:q.rows});
  }catch(e){next(e)}});
  router.patch('/payments/admin/withdrawals/:id',auth,async(req,res,next)=>{const c=await pool.connect();try{
