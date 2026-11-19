@@ -13,7 +13,7 @@ async function auth(req,res,next){try{req.user=await me(req);if(!req.user)return
 function admin(req,res,next){if(!req.user||req.user.role!=='admin')return res.status(403).json({error:'Admin access required.'});next()}
 app.disable('x-powered-by');app.set('trust proxy',1);app.use(helmet({contentSecurityPolicy:false}));app.use(express.json({limit:'30kb'}));app.use(express.urlencoded({extended:false,limit:'30kb'}));
 app.use(session({name:'taskbridge.sid',secret:secret||'local-development-only-change-before-deploying',resave:false,saveUninitialized:false,store:new PgSession({pool,tableName:'user_sessions',createTableIfMissing:true}),cookie:{httpOnly:true,sameSite:'lax',secure:production,maxAge:604800000}}));
-app.use('/marketplace',express.static(path.join(__dirname,'public')));app.get('/',(req,res)=>res.sendFile(path.resolve(__dirname,'..','index.html')));
+app.use('/marketplace',express.static(path.join(__dirname,'public')));app.get('/robots.txt',(req,res)=>res.type('text/plain').sendFile(path.resolve(__dirname,'..','robots.txt')));app.get('/sitemap.xml',(req,res)=>res.type('application/xml').sendFile(path.resolve(__dirname,'..','sitemap.xml')));app.get('/',(req,res)=>res.sendFile(path.resolve(__dirname,'..','index.html')));
 const authLimit=rateLimit({windowMs:900000,limit:30,standardHeaders:'draft-7',legacyHeaders:false}),writeLimit=rateLimit({windowMs:60000,limit:40,standardHeaders:'draft-7',legacyHeaders:false});
 app.get('/api/health',(req,res)=>res.json({ok:true,app:'TaskBridge MVP',database:'postgresql'}));
 app.get('/api/me',async(req,res,next)=>{try{res.json({user:await me(req)})}catch(e){next(e)}});
