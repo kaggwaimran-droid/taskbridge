@@ -50,7 +50,7 @@ CREATE TABLE IF NOT EXISTS withdrawal_requests(
    pool.query("SELECT currency,COALESCE(SUM(amount),0)::numeric AS total FROM task_payments WHERE client_id=$1 AND status='paid' GROUP BY currency",[req.user.id]),
    pool.query('SELECT id,amount,currency,network,phone_number,status,created_at FROM withdrawal_requests WHERE user_id=$1 ORDER BY created_at DESC LIMIT 20',[req.user.id]),
    pool.query("SELECT currency,COALESCE(SUM(amount),0)::numeric AS total FROM withdrawal_requests WHERE user_id=$1 AND status IN ('requested','processing','paid','completed') GROUP BY currency",[req.user.id]),
-   pool.query("SELECT currency,COALESCE(SUM(worker_net),0)::numeric AS total FROM submission_earnings WHERE worker_id=$1 AND status='pending_funding' GROUP BY currency",[req.user.id]),
+   pool.query("SELECT currency,COALESCE(SUM(worker_net),0)::numeric AS total FROM submission_earnings WHERE worker_id=$1 AND status IN ('pending_funding','awaiting_partner_payout') GROUP BY currency",[req.user.id]),
    pool.query("SELECT e.id,e.task_id,e.gross_amount,e.platform_fee,e.worker_net,e.currency,e.status,e.created_at,t.title FROM submission_earnings e JOIN tasks t ON t.id=e.task_id WHERE e.worker_id=$1 ORDER BY e.created_at DESC LIMIT 30",[req.user.id])
   ]);
   const reservedByCurrency=Object.fromEntries(reserved.rows.map(x=>[x.currency,Number(x.total)]));
