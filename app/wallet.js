@@ -7,7 +7,7 @@ module.exports = function walletRouter(pool) {
   // Provider deposits and payouts stay disabled until a licensed partner has
   // approved the custody/marketplace arrangement and its signed API/webhooks
   // have been configured.
-  const schema = pool.query(`
+  const schema = () => pool.query(`
     CREATE TABLE IF NOT EXISTS wallet_accounts (
       id BIGSERIAL PRIMARY KEY,
       user_id BIGINT NOT NULL REFERENCES users(id),
@@ -66,7 +66,7 @@ module.exports = function walletRouter(pool) {
 
   router.use(async (req, res, next) => {
     try {
-      await schema;
+      await schema();
       next();
     } catch (error) {
       next(error);
