@@ -109,7 +109,7 @@ module.exports = function walletRouter(pool) {
         )
       ]);
       res.json({
-        wallet_enabled: false,
+        wallet_enabled: process.env.TASK_WALLET_ENFORCED === 'true',
         deposits_enabled: false,
         payouts_enabled: false,
         balances: accounts.rows.map(row => ({
